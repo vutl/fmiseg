@@ -1,0 +1,23 @@
+args: !!python/object/new:utils.config.CfgNode
+  dictitems:
+    bert_type: ./lib/BiomedVLP-CXR-BERT-specialized
+    device: 0
+    image_size:
+    - 224
+    - 224
+    lr: 0.0003
+    max_epochs: 200
+    min_epochs: 20
+    model_save_filename: medseg
+    model_save_path: ./save_model
+    patience: 30
+    project_dim: 768
+    test_csv_path: ./data/QaTa-COV19-v2/prompt/test.csv
+    test_root_path: ./data/QaTa-COV19-v2/Test
+    train_batch_size: 32
+    train_csv_path: ./data/QaTa-COV19-v2/prompt/train.csv
+    train_root_path: ./data/QaTa-COV19-v2/Train
+    val_csv_path: ''
+    val_root_path: ''
+    valid_batch_size: 8
+    vision_type: ./lib/convnext-tiny-224

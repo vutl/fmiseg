@@ -1,0 +1,24 @@
+TRAIN:
+  train_batch_size: 32
+  lr: 0.0003
+  valid_batch_size: 8
+  image_size: [224,224]
+  min_epochs: 20
+  max_epochs: 200
+  patience: 30
+  device: 0
+  model_save_path: ./save_model
+  model_save_filename: medseg
+
+MODEL:
+  bert_type: ./lib/BiomedVLP-CXR-BERT-specialized
+  vision_type: ./lib/convnext-tiny-224
+  project_dim: 768
+
+DATA:
+  train_csv_path: ./data/QaTa-COV19-v2/prompt/train.csv
+  train_root_path: ./data/QaTa-COV19-v2/Train
+  val_csv_path: ""
+  val_root_path: ""
+  test_csv_path: ./data/QaTa-COV19-v2/prompt/test.csv
+  test_root_path: ./data/QaTa-COV19-v2/Test

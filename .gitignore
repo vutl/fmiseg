@@ -1,0 +1,12 @@
+data
+lib
+.vscode
+logs
+save_model
+*.pdf
+*.log
+*/__pycache__
+*.pyc
+*.pkl
+*.pt
+*.ckpt
