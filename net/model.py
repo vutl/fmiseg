@@ -1,9 +1,27 @@
+import os
 import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 from net.decoder import Decoder
 from monai.networks.blocks.dynunet_block import UnetOutBlock
 from monai.networks.blocks.upsample import SubpixelUpsample
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HF_CACHE_DIR = os.path.join(PROJECT_ROOT, '.hf_cache')
+os.makedirs(HF_CACHE_DIR, exist_ok=True)
+os.environ.setdefault('HF_HOME', HF_CACHE_DIR)
+os.environ.setdefault('HUGGINGFACE_HUB_CACHE', os.path.join(HF_CACHE_DIR, 'hub'))
+os.environ.setdefault('TRANSFORMERS_CACHE', os.path.join(HF_CACHE_DIR, 'hub'))
+os.environ.setdefault('HF_MODULES_CACHE', os.path.join(HF_CACHE_DIR, 'modules'))
+
+import transformers.dynamic_module_utils as dynamic_module_utils
+import transformers.utils.hub as transformers_hub
+
+dynamic_module_utils.HF_MODULES_CACHE = os.path.join(HF_CACHE_DIR, 'modules')
+transformers_hub.TRANSFORMERS_CACHE = os.path.join(HF_CACHE_DIR, 'hub')
+os.makedirs(dynamic_module_utils.HF_MODULES_CACHE, exist_ok=True)
+os.makedirs(transformers_hub.TRANSFORMERS_CACHE, exist_ok=True)
+
 from transformers import AutoTokenizer, AutoModel
 
 
@@ -46,12 +64,14 @@ class FFBI(nn.Module):
         super(FFBI, self).__init__()
         self.cross_attnh = nn.MultiheadAttention(embed_dim=dim,num_heads=num,batch_first=batchf)
         self.cross_attnl = nn.MultiheadAttention(embed_dim=dim,num_heads=num,batch_first=batchf)
+        self.norm_h = nn.LayerNorm(dim)
+        self.norm_l = nn.LayerNorm(dim)
 
     def forward(self, x,y):
         x1, _=self.cross_attnl(query=x,key=y,value=y)
-        x2 = x1 + x
+        x2 = self.norm_h(x1 + x)
         y1, _ = self.cross_attnh(query=y,key=x,value=x)
-        y2 = y1+ y
+        y2 = self.norm_l(y1 + y)
         return x2,y2
 
 
@@ -78,42 +98,43 @@ class SegModel(nn.Module):
         self.ffbi = FFBI(feature_dim[0],4,True)
     def forward(self, data):
 
-        image2,image, text = data
-        if image.shape[1] == 1:   
-            image = repeat(image,'b 1 h w -> b c h w',c=3)
-            image2 = repeat(image2,'b 1 h w -> b c h w',c=3)
+        high_image, low_image, text = data
+        if high_image.shape[1] == 1:
+            high_image = repeat(high_image,'b 1 h w -> b c h w',c=3)
+            low_image = repeat(low_image,'b 1 h w -> b c h w',c=3)
 
-        image_output = self.encoder(image)
-        image_output2 = self.encoder2(image2)
-        image_features, _ = image_output['feature'], image_output['project']
-        image_features2, _ = image_output2['feature'], image_output2['project']
+        high_output = self.encoder(high_image)
+        low_output = self.encoder2(low_image)
+        high_features, _ = high_output['feature'], high_output['project']
+        low_features, _ = low_output['feature'], low_output['project']
         text_output = self.text_encoder(text['input_ids'],text['attention_mask'])
         text_embeds, _ = text_output['feature'],text_output['project']
 
-        if len(image_features[0].shape) == 4: 
-            image_features = image_features[1:]  
-            image_features = [rearrange(item,'b c h w -> b (h w) c') for item in image_features] 
-            image_features2 = image_features2[1:]  
-            image_features2 = [rearrange(item,'b c h w -> b (h w) c') for item in image_features2]
-        os32 = image_features[3]
-        os32_2 = image_features2[3]
+        if len(high_features[0].shape) == 4:
+            high_features = high_features[1:]
+            high_features = [rearrange(item,'b c h w -> b (h w) c') for item in high_features]
+            low_features = low_features[1:]
+            low_features = [rearrange(item,'b c h w -> b (h w) c') for item in low_features]
+        high_os32 = high_features[3]
+        low_os32 = low_features[3]
 
-        fu32,fu32_2=self.ffbi(os32,os32_2)
+        high_fu32, low_fu32 = self.ffbi(high_os32, low_os32)
+        text_tokens = text_embeds[-1]
 
-        os16 = self.decoder16(fu32,image_features[2], text_embeds[-1])
-        os16_2 = self.decoder16_2(fu32_2,image_features2[2], text_embeds[-1])
+        high_os16 = self.decoder16(high_fu32, high_features[2], text_tokens)
+        low_os16 = self.decoder16_2(low_fu32, low_features[2], text_tokens)
         
-        os8 = self.decoder8(os16,image_features[1], text_embeds[-1])
-        os8_2 = self.decoder8_2(os16_2,image_features2[1], text_embeds[-1])
+        high_os8 = self.decoder8(high_os16, high_features[1], text_tokens)
+        low_os8 = self.decoder8_2(low_os16, low_features[1], text_tokens)
 
-        os4 = self.decoder4(os8,image_features[0], text_embeds[-1])
-        os4_2 = self.decoder4_2(os8_2,image_features2[0], text_embeds[-1])
-        os4 = rearrange(os4, 'B (H W) C -> B C H W',H=self.spatial_dim[-1],W=self.spatial_dim[-1])
-        os4_2 = rearrange(os4_2, 'B (H W) C -> B C H W',H=self.spatial_dim[-1],W=self.spatial_dim[-1])
-        os1 = self.decoder1(os4)
-        os1_2 = self.decoder1_2(os4_2)
+        high_os4 = self.decoder4(high_os8, high_features[0], text_tokens)
+        low_os4 = self.decoder4_2(low_os8, low_features[0], text_tokens)
+        high_os4 = rearrange(high_os4, 'B (H W) C -> B C H W',H=self.spatial_dim[-1],W=self.spatial_dim[-1])
+        low_os4 = rearrange(low_os4, 'B (H W) C -> B C H W',H=self.spatial_dim[-1],W=self.spatial_dim[-1])
+        high_os1 = self.decoder1(high_os4)
+        low_os1 = self.decoder1_2(low_os4)
 
-        out = self.out(os1).sigmoid()
-        out_2 = self.out_2(os1_2).sigmoid()
-        return out,out_2
+        high_logits = self.out(high_os1)
+        low_logits = self.out_2(low_os1)
+        return high_logits, low_logits
     

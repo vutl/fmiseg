@@ -2,7 +2,11 @@ data
 lib
 .vscode
 logs
+run_logs
 save_model
+checkpoints
+.hf_cache
+lightning_logs
 *.pdf
 *.log
 */__pycache__

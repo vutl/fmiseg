@@ -1,5 +1,5 @@
 from net.model import SegModel
-from monai.losses import DiceCELoss
+from monai.losses import DiceLoss
 from torchmetrics import Accuracy,Dice
 from torchmetrics.classification import BinaryJaccardIndex
 import torch
@@ -17,8 +17,9 @@ class CreateModel(pl.LightningModule):
         self.model = SegModel(args.bert_type, args.vision_type, args.project_dim)
         self.lr = args.lr
         self.history = {}
-        
-        self.loss_fn = DiceCELoss()
+        pos_weight = float(getattr(args, "bce_pos_weight", 1.0))
+        self.dice_loss = DiceLoss(sigmoid=True)
+        self.bce_loss = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight]))
 
         metrics_dict = {"acc":Accuracy(task='binary'),"dice":Dice(),"MIoU":BinaryJaccardIndex()}
         self.train_metrics = nn.ModuleDict(metrics_dict)
@@ -38,11 +39,15 @@ class CreateModel(pl.LightningModule):
 
     def shared_step(self,batch,batch_idx):
         x, y = batch
-        preds,preds2 = self(x)  
-        loss1 = self.loss_fn(preds,y)
-        loss2 = self.loss_fn(preds2,y)
-        loss=loss1+loss2
-        return {'loss': loss, 'preds': preds.detach(), 'y': y.detach()}    
+        logits1, logits2 = self(x)
+        y = y.float()
+        loss1 = self.dice_loss(logits1, y) + self.bce_loss(logits1, y)
+        loss2 = self.dice_loss(logits2, y) + self.bce_loss(logits2, y)
+        probs1 = torch.sigmoid(logits1)
+        probs2 = torch.sigmoid(logits2)
+        probs = (probs1 + probs2) / 2.0
+        loss = loss1 + loss2
+        return {'loss': loss, 'preds': probs.detach(), 'y': y.detach()}
     
     def training_step(self, batch, batch_idx):
         return self.shared_step(batch,batch_idx)
@@ -62,8 +67,9 @@ class CreateModel(pl.LightningModule):
     def shared_step_end(self,outputs,stage):
         metrics = self.train_metrics if stage=="train" else (
             self.val_metrics if stage=="val" else self.test_metrics)
+        target = outputs['y'].int()
         for name in metrics:
-            step_metric = metrics[name](outputs['preds'], outputs['y']).item()
+            step_metric = metrics[name](outputs['preds'], target).item()
             if stage=="train":
                 self.log(name,step_metric,prog_bar=True)
         return outputs["loss"].mean()
@@ -97,14 +103,16 @@ class CreateModel(pl.LightningModule):
         dic = self.shared_epoch_end(outputs,stage="train")
         self.print(dic)
         dic.pop("epoch",None)
-        self.log_dict(dic, logger=True)
+        for key, value in dic.items():
+            self.log(key, value, logger=True, on_step=False, on_epoch=True)
 
     def validation_epoch_end(self, outputs):
         dic = self.shared_epoch_end(outputs,stage="val")
         self.print_bar()
         self.print(dic)
         dic.pop("epoch",None)
-        self.log_dict(dic, logger=True)
+        for key, value in dic.items():
+            self.log(key, value, logger=True, prog_bar=(key in {"val_loss", "val_dice", "val_MIoU"}), on_step=False, on_epoch=True)
         
         #log when reach best score
         ckpt_cb = self.trainer.checkpoint_callback
@@ -120,7 +128,8 @@ class CreateModel(pl.LightningModule):
         dic = self.shared_epoch_end(outputs,stage="test")
         dic.pop("epoch",None)
         self.print(dic)
-        self.log_dict(dic, logger=True)
+        for key, value in dic.items():
+            self.log(key, value, logger=True, on_step=False, on_epoch=True)
         
     def get_history(self):
         return pd.DataFrame(self.history.values()) 

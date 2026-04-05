@@ -11,8 +11,54 @@ import os
 import platform
 import glob
 import time
+import re
 
 # don't hardcode CUDA_VISIBLE_DEVICES; we'll set it after reading config
+
+
+def parse_metric_from_checkpoint_name(path, monitor_name):
+    filename = os.path.basename(path)
+    pattern = re.escape(monitor_name) + r'=([0-9]*\.?[0-9]+)'
+    match = re.search(pattern, filename)
+    return float(match.group(1)) if match else None
+
+
+def resolve_best_checkpoint_from_dir(model_dir, monitor_name='val_MIoU', mode='max'):
+    if not model_dir or not os.path.isdir(model_dir):
+        return None
+
+    info_path = os.path.join(model_dir, 'best_checkpoint.txt')
+    if os.path.isfile(info_path):
+        with open(info_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if line.startswith('best_model_path='):
+                    candidate = line.split('=', 1)[1].strip()
+                    if candidate and os.path.isfile(candidate):
+                        return candidate
+
+    scored = []
+    fallback = []
+    for path in glob.glob(os.path.join(model_dir, '*.ckpt')):
+        name = os.path.basename(path)
+        if name.startswith('last'):
+            continue
+        metric_value = parse_metric_from_checkpoint_name(path, monitor_name)
+        if metric_value is None:
+            fallback.append(path)
+        else:
+            scored.append((metric_value, path))
+
+    if scored:
+        reverse = mode == 'max'
+        scored.sort(key=lambda item: item[0], reverse=reverse)
+        return scored[0][1]
+    if fallback:
+        return max(fallback, key=os.path.getmtime)
+
+    last_path = os.path.join(model_dir, 'last.ckpt')
+    if os.path.isfile(last_path):
+        return last_path
+    return None
 
 def get_parser():
     parser = argparse.ArgumentParser(
@@ -29,16 +75,25 @@ def get_parser():
 
 if __name__ == '__main__':
     args = get_parser()
+    dataset_name = getattr(args, 'dataset_name', 'cov19')
+    wavelet_type = getattr(args, 'wavelet_type', 'haar')
+    if torch.cuda.is_available():
+        torch.set_float32_matmul_precision(getattr(args, 'matmul_precision', 'medium'))
     # load model
     model = CreateModel(args)
 
-    # find checkpoint: prefer newest .ckpt in model_save_path if any
-    model_dir = getattr(args, 'model_save_path', './save_model')
-    ckpt_candidates = glob.glob(os.path.join(model_dir, '*.ckpt'))
-    if not ckpt_candidates:
-        raise FileNotFoundError(f"No checkpoint (.ckpt) found in {model_dir}")
-    # pick most recently modified
-    ckpt_path = max(ckpt_candidates, key=os.path.getmtime)
+    checkpoint_path = getattr(args, 'checkpoint_path', None)
+    if checkpoint_path:
+        ckpt_path = checkpoint_path
+    else:
+        model_dir = getattr(args, 'model_save_path', './save_model')
+        ckpt_path = resolve_best_checkpoint_from_dir(
+            model_dir,
+            monitor_name=getattr(args, 'checkpoint_monitor', 'val_MIoU'),
+            mode=getattr(args, 'checkpoint_mode', 'max'),
+        )
+        if not ckpt_path:
+            raise FileNotFoundError(f"No checkpoint (.ckpt) found in {model_dir}")
 
     print(f"Loading checkpoint from: {ckpt_path}")
     checkpoint = torch.load(ckpt_path, map_location='cpu')["state_dict"]
@@ -76,14 +131,26 @@ if __name__ == '__main__':
         # try to use a few workers
         test_workers = min(8, max(0, args.valid_batch_size))
 
-    ds_test = SegData(dataname="cov19",#cov19
+    ds_test = SegData(dataname=dataset_name,
                     csv_path=args.test_csv_path,
                     root_path=args.test_root_path,
                     tokenizer=args.bert_type,
                     image_size=args.image_size,
-                    mode='test')
-    dl_test = DataLoader(ds_test, batch_size=args.valid_batch_size, shuffle=False, num_workers=test_workers)
+                    mode='test',
+                    wavelet_type=wavelet_type,
+                    auto_prompt_from_mask=getattr(args, 'auto_prompt_from_mask', False))
+    dl_test = DataLoader(
+        ds_test,
+        batch_size=args.valid_batch_size,
+        shuffle=False,
+        num_workers=test_workers,
+        pin_memory=torch.cuda.is_available(),
+    )
 
-    trainer = pl.Trainer(accelerator=accelerator, devices=devices)
+    trainer = pl.Trainer(
+        accelerator=accelerator,
+        devices=devices,
+        limit_test_batches=getattr(args, 'limit_test_batches', 1.0),
+    )
     model.eval()
     trainer.test(model, dl_test)

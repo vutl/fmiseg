@@ -1,0 +1,38 @@
+TRAIN:
+  dataset_name: mosmed
+  wavelet_type: haar
+  train_batch_size: 8
+  lr: 0.0003
+  valid_batch_size: 4
+  image_size: [224,224]
+  min_epochs: 20
+  max_epochs: 100
+  patience: 20
+  device: 0
+  model_save_path: ./checkpoints/mosmed
+  model_save_filename: medseg-mosmed-{epoch:02d}-{val_MIoU:.4f}
+  experiment_name: mosmed_full
+  log_root: ./run_logs
+  seed: 42
+  matmul_precision: medium
+  log_every_n_steps: 10
+  accumulate_grad_batches: 4
+  auto_pos_weight: true
+  min_bce_pos_weight: 1.0
+  max_bce_pos_weight: 256.0
+  run_test_after_fit: true
+  auto_prompt_from_mask: false
+  resume_latest: true
+
+MODEL:
+  bert_type: ./lib/BiomedVLP-CXR-BERT-specialized
+  vision_type: ./lib/convnext-tiny-224
+  project_dim: 768
+
+DATA:
+  train_csv_path: "D:\\Documents\\LMIS\\FMISeg\\data\\MosMed\\Train_text_MosMedData+ 1(in).csv"
+  train_root_path: "D:\\Documents\\LMIS\\FMISeg\\data\\MosMed"
+  val_csv_path: "D:\\Documents\\LMIS\\FMISeg\\data\\MosMed\\Val_text_MosMedData+ 1(in).csv"
+  val_root_path: "D:\\Documents\\LMIS\\FMISeg\\data\\MosMed"
+  test_csv_path: "D:\\Documents\\LMIS\\FMISeg\\data\\MosMed\\Test_text_MosMedData+(in).csv"
+  test_root_path: "D:\\Documents\\LMIS\\FMISeg\\data\\MosMed"

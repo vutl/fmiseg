@@ -1,0 +1,41 @@
+TRAIN:
+  dataset_name: mosmed
+  wavelet_type: haar
+  train_batch_size: 2
+  lr: 0.0003
+  valid_batch_size: 2
+  image_size: [224,224]
+  min_epochs: 1
+  max_epochs: 1
+  patience: 1
+  device: 0
+  model_save_path: ./checkpoints/mosmed_smoke
+  model_save_filename: medseg-mosmed-smoke
+  experiment_name: mosmed_smoke
+  log_root: ./run_logs
+  seed: 42
+  matmul_precision: medium
+  log_every_n_steps: 1
+  accumulate_grad_batches: 1
+  auto_pos_weight: true
+  min_bce_pos_weight: 1.0
+  max_bce_pos_weight: 256.0
+  limit_train_batches: 2
+  limit_val_batches: 1
+  limit_test_batches: 1
+  num_sanity_val_steps: 0
+  run_test_after_fit: true
+  auto_prompt_from_mask: false
+
+MODEL:
+  bert_type: ./lib/BiomedVLP-CXR-BERT-specialized
+  vision_type: ./lib/convnext-tiny-224
+  project_dim: 768
+
+DATA:
+  train_csv_path: "D:\\Documents\\LMIS\\FMISeg\\data\\MosMed\\Train_text_MosMedData+ 1(in).csv"
+  train_root_path: "D:\\Documents\\LMIS\\FMISeg\\data\\MosMed"
+  val_csv_path: "D:\\Documents\\LMIS\\FMISeg\\data\\MosMed\\Val_text_MosMedData+ 1(in).csv"
+  val_root_path: "D:\\Documents\\LMIS\\FMISeg\\data\\MosMed"
+  test_csv_path: "D:\\Documents\\LMIS\\FMISeg\\data\\MosMed\\Test_text_MosMedData+(in).csv"
+  test_root_path: "D:\\Documents\\LMIS\\FMISeg\\data\\MosMed"
